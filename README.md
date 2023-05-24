@@ -15,7 +15,7 @@ En este repositorio encontrarás ejemplos de cómo implementar varios algoritmos
 Cada directorio dentro del repositorio corresponde a uno de estos algoritmos e incluye código R, datos y figuras de ejemplo.
 
 ## Uso
-Para utilizar estos ejercicios, puedes clonar este repositorio y abrir los archivos .R en tu entorno R preferido. No he actualizado estos ejercicios desde que los creé, así que considera esto como un archivo de mi viaje de aprendizaje más que como un recurso de aprendizaje actualizado.
+Para utilizar estos ejercicios, puedes clonar este repositorio y abrir los archivos .Rmd en tu entorno R preferido. No he actualizado estos ejercicios desde que los creé, así que considera esto como un archivo de mi viaje de aprendizaje más que como un recurso de aprendizaje actualizado.
 
 ## Contribución
 Dado que este repositorio está destinado a ser un archivo personal, no estoy buscando contribuciones activamente. Sin embargo, si encuentras algún error o tienes alguna sugerencia de mejora, no dudes en abrir un issue.

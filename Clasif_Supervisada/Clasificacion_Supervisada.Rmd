@@ -1,0 +1,689 @@
+---
+title: "Clasificacion_Supervisada"
+author: "Jessica Bernal"
+date: "20/3/2022"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Técnicas de clasificación y evaluación de procesos en sistemas forestales
+
+###### Jessica Bernal Borrego
+
+**Contenido:**
+
+1. [Introducción](#id1)
+2. [Creación muestreo](#id2)
+3. [Clasficación supervisada](#id3)
+4. [Clasificador KNN](#id4)
+5. [Clasificador ANN](#id5)
+6. [Clasificador SVM](#id6)
+7. [Clasificador RF](#id7)
+8. [comparativa resultados entre clasificadores](#id8)
+8. [Clasificador multi-temporal](#id9)
+
+<div id='id1' />
+###Introducción
+
+
+Los objetivos de este tutorial son:
+- Clasificar una extracto de una escena Sentinel 2 usando diferentes clasificadores de machine learning.
+- Comparar los resultados obtenidos empleando distintos clasificadores
+
+Los paquete que emplearemos son:
+```{r, results='hide', warning=FALSE, message=FALSE}
+library(sp)
+library(rgdal)
+library(raster)
+library(reshape)
+library(grid)
+library(gridExtra)
+library(RStoolbox)
+library(caret)
+library(rasterVis)
+library(corrplot)
+library(doParallel)
+library(NeuralNetTools)
+library(tidyr)
+library(stringr)
+library(e1071)
+library(sf)
+library (mapview) 
+```
+
+El siguiente paso consistirá en definir el directorio de trabajo donde se localizarán nuestras imágenes. Los datos se corresponden con una escena Sentinel 2 (fichero denominado sentinel_o_bxx.tif, siendo xx el número de la banda)
+
+```{r, results='hide', warning=FALSE, message=FALSE}
+setwd("C:/Geoforest/Tec_Clasif")
+dir_in<-"./Material_practicas/Sentinel/O"
+```
+Como en cuadernos anteriores creamos una lista con los nombres de los archivos alojados en el directorio de trabajo, creando posteriormente un rasterstack
+```{r}
+rasList <- list.files(dir_in,pattern="tif",
+                      full.names = TRUE)
+
+sentinel_o <- stack(rasList)
+```
+Una vez generado, vamos a proceder a comprobar los atributos de la escena
+```{r}
+sentinel_o
+```
+
+A continuación se van a generar el gráfico de densidad y el histograma para una de las bandas. En primer lugar lo calcularemos para una de las bandas (imagen).
+```{r}
+gdensidad=ggplot(sentinel_o,aes(sentinel_o_b01))+geom_density()
+ghistograma=ggplot(sentinel_o,aes(sentinel_o_b01))+geom_histogram()
+
+print (gdensidad)
+print (ghistograma)
+```
+Si las queremos hacer de todas las bandas es posible generar un gráfico por cada una de ellas y posteriormente componerlos en una sola figura
+```{r}
+gdens1=ggplot(sentinel_o,aes(sentinel_o_b01))+geom_density()
+gdens2=ggplot(sentinel_o,aes(sentinel_o_b02))+geom_density()
+gdens3=ggplot(sentinel_o,aes(sentinel_o_b03))+geom_density()
+gdens4=ggplot(sentinel_o,aes(sentinel_o_b04))+geom_density()
+gdens5=ggplot(sentinel_o,aes(sentinel_o_b05))+geom_density()
+gdens6=ggplot(sentinel_o,aes(sentinel_o_b06))+geom_density()
+gdens7=ggplot(sentinel_o,aes(sentinel_o_b07))+geom_density()
+gdens8=ggplot(sentinel_o,aes(sentinel_o_b08))+geom_density()
+gdens9=ggplot(sentinel_o,aes(sentinel_o_b09))+geom_density()
+gdens10=ggplot(sentinel_o,aes(sentinel_o_b10))+geom_density()
+
+grid.arrange(gdens1,gdens2,gdens3,gdens4,gdens5,gdens6,gdens7,gdens8,gdens9,gdens10,ncol=4,nrow=4)
+```
+
+<div id='id2' />
+### Creación muestreo
+
+Al ser una clasificación supervisada necesitaremos aportar al clasificador la información necesaria para realizar las fases de entrenamiento y validación. A partir del MFE facilitado, con geometría poligonal, tenemos dos opciones a la hora de continuar. Para ello, es necesario saber que en este entorno de trabajo la información suministrada al clasificador deberá ser de tipo poligonal. Por ello, las opciones son:
+
+* Opción 1: Preparación de los datos desde un software externo, por ejemplo QGIS, y luego leerlo en R.
+
+* Opción 2: Preparación de los datos desde R.
+
+En el caso de optar por trabajar con una herramienta externa los datos de tipo puntual pueden ser almacendados en formato shapefile y luego ser leidos mediante la función **readOGR**.
+
+A modo de ejemplo, la llamada a la función sería:
+```{r}
+#train_data<-readOGR('./entrenamiento/muestreo_500.shp')
+
+```
+Debiendo comprobar posteriormente la estructura del fichero leido.
+```{r}
+#str(train_data)
+```
+
+Tambien es posible hacer la misma operación mediante la función **st_read**.
+
+En este cuaderno se optará por trabajar con la segunda opción, es decir, preparando el muestreo desde R.
+
+Para ello, en primer lugar se procederá a leer el archivo shapefile del MFE.
+
+```{r}
+#Generamos una semilla para garantizar la repetitividad de los resultados
+set.seed(123)
+MFE=st_read('./Material_practicas/MFE/MFE.shp')
+
+mapview (MFE,zcol='leyenda')
+```
+
+Con objeto de obtener una muestra balanceada se va a determinar el total de la superficie ocupada por cada clase de la leyenda, repartiendo el tamaño de la muestra proporcional a la superficie ocupada.
+
+```{r}
+clases = unique(MFE$leyenda)
+
+area_total = sum(st_area(MFE))
+area_clases=0
+for (i in 1:length(clases)) {
+  geom_clase=MFE[which(MFE$leyenda == clases[i],arr.ind=FALSE),]
+  area_clases[i]=sum(st_area(geom_clase))
+}
+```
+
+Se va a fijar un tamaño total de muestreo igual a 500 puntos de tal forma que en cada clase habrá el siguiente número de muestras.
+```{r}
+num_muestras= as.integer(500*area_clases/area_total)
+print(num_muestras)
+```
+
+En este punto, analizar el número de cada clase. ¿Hay muestras en todas las clases?, ¿Que significa que haya clases con un número elevado y otras que sea muy reducido o directamente cero?
+
+Aun sabiendo que no es correcto, en lugar de establecer el muestreo atendiendo al criterio anterior se va a seleccionar un número fijo de muestras para todas las clases. De esta manera, el trabajo a entregar por el alumno será determinar una leyenda adecuada a la variabilidad espacial y espectral de las clases presentes en la escena.
+
+Por ello, en primer lugar se va a proceder a realizar un muestro sobre el MFE de tipo aleatorio, extrayendo la información temática a partir de la función **st_join**.
+
+```{r}
+
+puntos.ref <- st_sample(MFE, c(50,50,50,50,50,50,50,50,50,50,50,50,50), type='random',exact=TRUE) #Generamos una lista de puntos de forma aleatoria
+puntos.ref<-st_sf(puntos.ref) #Convertimos la lista en un spatial feature
+
+puntos.ref<-st_join(puntos.ref,MFE) #Cruzamos los datos
+puntos.ref_backup <- puntos.ref
+mapview(puntos.ref, zcol='leyenda')
+```
+ Y su representación sobre el MFE:
+```{r}
+mapview(MFE, zcol='leyenda')+mapview(puntos.ref,zcol='leyenda')
+```
+
+A continuación se va a proceder a obtener la firma espectral de cada una de las clases. en primer lugar será necesario extraer los valores de reflectancia para cada punto en cada una de las bandas mediante el comando **extract**. Como estos datos los representaremos mediante la librería *ggplot* los convertiremos a un tipo de dato dataframe. Además, antes de la representación se determinarán los valores medios de reflectancia por clase y banda.
+
+Así, en primer lugar generamos el dataframe.
+```{r}
+puntos.ref=as_Spatial(puntos.ref)
+puntos.ref@data$leyenda=as.factor(puntos.ref@data$leyenda)
+
+reflectancia<- as.data.frame(raster::extract(sentinel_o,puntos.ref))
+```
+
+Comprobando los valores extraidos.
+```{r}
+head(reflectancia)
+```
+
+Calculamos el valor medio de reflectancia de cada clase para cada banda. Para ello, usaremos la función **aggregate()** para unir los puntos de entrenamiento por clase.
+```{r}
+mean_reflectancia <-aggregate(reflectancia,list(puntos.ref$leyenda),mean,na.rm = TRUE)
+```
+
+Comprobamos los valores medios obtenidos
+```{r}
+head(mean_reflectancia)
+```
+Por la forma en la que estan almacenados los datos en el dataframe (cada banda se almacena en una columna) es necesario modificarlo para que esten todos los datos de reflectancias registrados en una columna, creando una nueva columna donde se registre la banda de donde proceden, de tal forma que la información aparecerá ordenada por filas.
+```{r}
+mean_reflectance2 <- gather(mean_reflectancia, key="banda", value="reflectance",sentinel_o_b01:sentinel_o_b10)
+```
+Si analizamos el contenido del dataframe no se dispone de un campo numerico que permita ordenar las bandas a la hora de pintarlas. Por ello se va a crear un nuevo campo de tipo numérico con el número de la banda.
+```{r}
+mean_reflectance2$banda_num=(as.numeric(str_replace(mean_reflectance2$banda,"sentinel_o_b","")))
+```
+Finalmente, mediante **ggplot** se pintará un gráfico de tipo **geom_line** para ver la firma espectral de cada una de clases. 
+
+Como se puede ver, muchas de las clases presentan un comportamiento muy similar y por tanto la calidad temática de los resultados de la clasificación a priori pueden ser bajos.
+```{r}
+ggplot(mean_reflectance2,aes(x=banda_num,y=reflectance))+
+  geom_line(aes(colour = Group.1))+theme_bw()
+```
+
+<div id='id3' />
+### Clasficación  supervisada
+
+En primer lugar veremos el uso de alguno de los operadores clásicos empleados en Teledetección para clasificar imágenes, en este caso clasificador por máxima probabilidad. Para ello se empleará la función **superClass** dentro del paquete RStoolbox. De entre los parámetros a incluir en la función destacar que:
+
+* trainData contiene el muestreo a emplear en la clasificación.
+
+* trainPartition: contiene un valor indicando el tamaño de la muestra destinada al entrenamiento.
+
+* model indica el tipo de clasficación que se desea realizar, por defecto la función aplica un random forest (rf) pero en este caso se realizará una clasificación por máxima probabilidad (mlc).
+* 
+```{r results='hide', warning=FALSE, message=FALSE}
+#puntos.ref<- as_Spatial(puntos.ref)
+puntos.ref@data$leyenda=as.factor(puntos.ref@data$leyenda)
+
+Max.prob<- superClass(sentinel_o, 
+                      trainData = puntos.ref, 
+                      trainPartition =0.5,
+                      responseCol = "leyenda",
+                      model = "mlc") #máxima probabilidad
+```
+
+El resultado de la clasificación se muestra recogido en una variable de tipo lista. En el quinto elemento de la lista se recoge el resultado cartográfico mediante un **rasterLayer**, pudiendo ser representado por ejemplo mediante la función **plot**.
+```{r}
+leyenda_colores <- viridis::viridis(13)
+plot(Max.prob$map,
+     col=leyenda_colores,
+     legend = FALSE)
+legend("topright",cex=0.65, y.intersp = 0.55,x.intersp = 0.5,
+        legend = levels(as.factor(puntos.ref$leyenda)),
+        fill = leyenda_colores ,title = "",
+        inset=c(0,0))
+```
+Además del producto cartográfico es necesario realizar una evaluación de la calidad temática. Para ello mediante en el segundo elemento de la lista, denominado **modelFit** se encuentra la matriz de confusión resultante así como los valores de exactitud global y kapp obtenidos en el entrenamiento. Por otro lado en el elemento **results** aparecen recogidos estos elementos de calidad global y su desviación. 
+
+```{r}
+Max.prob$modelFit
+
+Max.prob$model$results
+
+```
+
+#### Creación de un dataframe con los puntos del entrenamiento etiquetados y con sus valores de reflectancia
+En el paso anterior se generó un dataframe con los valores medios de reflectancia para cada clase. Ahora se va a generar un dataframe que contendrá para cada punto su etiqueta y los valores de reflectancia de todas y cada una de las bandas.
+Advertir que el objeto *train_data@data* apunta a toda esa información, de forma que *@* es un operador especial que permite acceder a un objeto dentro de otro objeto.
+Nota: Se va a crear una variable denominada **train_data** igual a **puntos.ref** por si el trascurso de la práctica se comete un error, pudiendo tener así un backup de los datos hasta este punto.
+
+```{r}
+train_data = as_Spatial(puntos.ref_backup)
+train_data@data$leyenda=as.factor(puntos.ref@data$leyenda)
+train_data@data=data.frame(train_data@data,reflectancia[match(rownames(train_data@data),rownames(reflectancia)),])
+```
+
+Veamos el resultado obtenido.
+```{r}
+str(train_data)
+```
+Podemos observar como nos indica que tenemos 11 variables, una correspondiente a la clase y diez a las bandas espectrales, siendo estas últimas nuestras variables predictoras de la variable respuesta consistente en las clases.
+Ahora, podriamos ver un resumen estadístico de la variable.
+```{r}
+summary(train_data@data)
+```
+
+En este caso se observa como no hay datos ausentes (*NA*). En caso de que aparecieran es importante eliminarlos, empleando para ello la función **na.omit()**. Una vez aplicada podemos emplear la función **complete.cases()** para comprobar que se han borrado.
+```{r}
+train_data@data= na.omit(train_data@data)
+complete.cases(train_data@data)
+```
+
+#### Preparación del set de entrenamiento y testeo
+
+Es recomendable separar de forma aleatoria el set de entrenamiento inicial en 3 grupos: entrenamiento, validación y testeo. En este caso solo lo vamos a separar en los dos primeros. Para ello, en primer lugar es necesario establecer un valor predefinido de semilla empleando **set.seed()**.
+```{r}
+hre_seed<- 123
+set.seed(hre_seed)
+```
+Ahora, dividiremos nuestro set de entrenamiento inicial en entrenamiento y testeo usando para ello la función **createDataPartition()** del paquete *caret*. Por ejemplo, vamos a establecer que el 80% de los datos iniciales pasen a ser de entrenamiento y el 20% de test. Recordar que el entrenamiento nos permitirá optimizar los parámetros iniciales del modelo mientras que los de testeo nos permitirán evaluar la calidad del mismo.
+
+Nota: Se ha establecido como variable *train_data@data$leyenda* pues es esta la que que contiene la etiqueta de las clases. Por otro lado el parámetro *p* contiene el porcentaje a emplear en la separación de la muestra. Finalmente, el parámetro *list* indica si devuelve una lista o una matriz, en nuestro caso indicaremos *FALSE* de forma que devuelve una matriz.
+
+Así, el resultado de la variable **inTraining** como podemos comprobar es una lista de valores núméricos indicando el índice de los elementos empleados para entrenamiento.
+```{r}
+inTraining <- createDataPartition(train_data@data$leyenda, p=0.80,list=FALSE)
+
+training <-train_data@data[inTraining,]
+training=training[,-(1:4)] #Borramos columnas no necesarias
+
+testing <- train_data@data[-inTraining,]
+testing=testing[,-(1:4)] #Borramos columnas no necesarias
+```
+
+#### Resumen estadistico de los set de entreneamiento y testeo
+
+Antes de comenzar el entrenamiento del clasificador de machine learning previo a la clasificación es necesario realizar un chequeo de los set de datos pues puede ser que las imágenes presenten problemas o que hayamos cometido errores en la identificación.
+Así, en primer lugar vamos a obtener un resumen estadístico de ambos set.
+```{r}
+summary(training)
+```
+
+```{r}
+summary(testing)
+```
+Posteriormente vamos a generar un grafico de densidades para cada clase / banda que permita representar la distribución de los datos. Esto va a permitirnos evaluar si hay una adecuada separabilidad entre las clases. Además permite determinar si el efecto cizalla en la distribución es acusado o no.
+Nota: Se han seleccionado los índices 2 al 11 pues en el caso de este ejemplo contienen los datos de reflectancia para cada punto en todas las bandas empleadas.
+
+```{r}
+featurePlot(x=training[,2:11],
+            y=training$leyenda,
+            plot="density",
+            labels=c("Reflectancia","Distribucion densidades"),
+            layout=c(2,2))
+```
+
+Por otro lado podemos calcular la cizalla mediante la función **skewness()** de la librería *e1071*. Nos apartorá información si al distribución es simétrica o no. Por lo general, una distribución es simétrica cuando el valor de skewness es 0 o próximo a 0.
+```{r}
+skwenessvalues <- apply(training[,2:11],2,skewness)
+skwenessvalues
+```
+Por otro lado, si se detecta alguna distribución bimodal puede ser indicativo de una posible presencia de errores groseros en el muestreo. De forma complementaria podemos representar los datos mediante cajas de bigotes con objeto de ver esta presencia.
+```{r}
+featurePlot(x=training[,2:11],
+            y=training$leyenda,
+            plot="box",
+            layout=c(2,2))
+```
+La posible presencia de errores groseros podría deberse por una parte a fallos humanos o tambien a la propia variabilidad del territorio y el comportamiento de las clases. Supongamos por ejemplo que contamos con las clases "uso agricola" y "suelo desnudo", es posible que estas dos clases presenten un comportamiento similar, siendo adecuado analizar la correlación entre bandas.
+
+A modo de ejemplo se presentan graficos de correlación entre dos clases y 6 bandas espectrales, viendo una clara correlación entre bandas.
+```{r}
+band1_2 <-ggplot(data=training,aes(sentinel_o_b01,sentinel_o_b02))+
+                   geom_point(aes(shape=leyenda,colour=leyenda))
+
+band1_3 <-ggplot(data=training,aes(sentinel_o_b01,sentinel_o_b03))+
+                   geom_point(aes(shape=leyenda,colour=leyenda))
+
+band1_4 <-ggplot(data=training,aes(sentinel_o_b01,sentinel_o_b04))+
+                   geom_point(aes(shape=leyenda,colour=leyenda))
+
+band1_5 <-ggplot(data=training,aes(sentinel_o_b01,sentinel_o_b05))+
+                   geom_point(aes(shape=leyenda,colour=leyenda))
+
+grid.arrange(band1_2,band1_3,band1_4,band1_5)
+```
+Numéricamente, mediante la función **cor()** calculamos la correlacion entre las bandas espectrales de la escena. El resultado puede ser "complejo" de analizar, siendo mejor una representación gráfica.
+```{r}
+bandcorrelaciones = cor(training[,2:11])
+
+bandcorrelaciones
+```
+Esta sería la representación gráfica de la matriz de correlación
+```{r}
+corrplot(bandcorrelaciones,method="number")
+corrplot(bandcorrelaciones,method="number",type = "upper")
+corrplot(bandcorrelaciones,method="color",type="lower")
+```
+
+#### Definición de los parámetros del modelo para entrenamiento
+
+Este paso es uno de los mas importantes, pued de la correcta configuración de los parámetros dependerán nuestros resultados. Para ello, usaremos la función **trainControl()** dentro del paquete *caret*. Esta se va a encargar de definir la configuración óptima del modelo. La función presenta tres parámetros:
+
+  - method: "boot", "boot632", "optimism_boot", "boot_all", "cv", "repeatedcv", "LOOCV",etc...
+  
+  - number: establece el numero de partes o bloques a dividir el conjunto de datos del mismo tamaño.
+  
+  - repeat: número de repeticiones.
+
+La función selecciona el valor que da el mejor resultado.
+
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+                           number=5,
+                           repeats=5)
+```
+
+<div id='id4' />
+#### Entrenamiento de un clasificador KNN (k-nearest neighbors)
+
+La función **train()** del paquete *caret* es la que contiene la lógica para definir el clasificador de machine learning. Aspectos a destacar en el uso de la función:
+
+ - clases ~ : Indica que se emplearán todos los atributos.
+ 
+ - El parámetro *data* contiene las variables predictoras.
+ 
+ - El parámetro *method* indica el métdo del clasificador a emplear, en este caso *knn*.
+ 
+ - trControl establece como vamos a definir los parámetros del modelo, ver paso anterior.
+ 
+En el caso de usar un clasificador KNN como método no paramétrico utilizado en  clasificación, este predice o clasifica una muestra de datos utilizando la muestra más cercana a **k** de los datos de entrenamiento. 
+
+Por  tanto, un clasificador KNN depende en gran medida de cómo se defina la distancia entre las muestras. Aunque hay muchas métricas de distancia, la distancia euclidiana es la que se utiliza habitualmente. 
+
+Dado que la distancia entre las muestras es crítica, se recomienda preprocesar (centrar y escalar) las variables predictoras antes de ejecutar el clasificador KNN. Esto elimina los sesgos y permite que todos los predictores sean tratados por igual al calcular la distancia. 
+
+Las *ventajas* del clasificador KNN son: 
+
+* Es un clasificador sencillo que puede implementarse fácilmente.
+
+* Resulta apropiado para manejar clases multimodales. 
+
+Como *inconveniente*, requiere el cálculo de la distancia de los vecinos más cercanos, lo que puede demandar una alta capacidad de cómputo, sobre todo si el conjunto de datos de entrenamiento es grande.
+
+```{r results='hide', warning=FALSE, message=FALSE}
+knnFit <- train(leyenda ~ .,data=training,
+               method="kknn",
+               preProcess=c("center","scale"),
+               trControl = fitControl)
+```
+
+```{r}
+print (knnFit)
+```
+
+Si graficamos los resultados podemos observar cual es el número adecuado de vecinos.
+```{r}
+plot (knnFit)
+```
+Así como la configuaración del modelo
+```{r}
+knnFit$finalModel
+```
+
+Y la importancia de las variables empleadas a través de la función **varImp()**.
+```{r}
+knnvarImp <-varImp(knnFit,compete=FALSE)
+plot(knnvarImp)
+```
+
+Además del entrenamiento, resulta necesario realizar un testeo del mismo, empleando para ello la función **predict()**
+```{r}
+pred_knnFit <-predict(knnFit,newdata=testing)
+```
+
+Una vez realizado la fase de testeo sera necesario realizar un análisis de la calidad obtenida
+```{r}
+confusionMatrix(data=pred_knnFit,testing$leyenda)
+```
+Si los resultados en el control de calidad son positivos quedaría aplicar el modelo sobre la imagen para obtener la clasificación. (Este proceso requiere tiempo de computo dependiendo de la máquina empleada)
+```{r}
+LC_knnFit <- predict(sentinel_o,knnFit)
+```
+
+```{r }
+mapview(LC_knnFit)
+```
+
+<div id='id5' />
+#### Entrenar a un clasificador ANN (Artificial Neural Networks)
+
+Un clasificador ANN es un método basado en simular el funcionamiento del cerebro humano para: a) adquisición de conocimientos, b) recordar, c) sintetizar y, d) resolver problemas. 
+Hay distintos clasificadore KNN com el perceptrón multicapa (MLP);  mapas de características auto-organizados (SOM) de Kohonen; las redes de Hopfield; el clasificador de Carpenter/Grossberg.
+
+De todos ellos, el de tipo MLP es uno de los modelos de red neuronal más utilizados, generalmente consta de tres o más capas: 
+
+* Una capa de entrada: consta de uno o varios elementos de procesamiento que presentan los datos de entrenamiento.
+
+* Una o más capas ocultas, responsable de la representación interna de los datos, así como de la transformación de la información entre las capas de entrada y de salida.
+
+* Una capa de salida: consta de uno o varios elementos de procesamiento que almacenan los resultados de la red.
+
+Las *ventajas* de un clasificadores KNN son que:
+
+* Los datos no deben estar sujetos a seguir una distribución normal.
+
+* Tienen la capacidad de generar límites de decisión no lineales.
+
+* Capacidad de aprender patrones complejos. 
+
+Sin embargo, los clasificadores de KNN son propensos al *overfiting* sobreajuste, siendo complejo el diseñar una red neuronal eficaz. El overfitting se debe a que el modelo se ajustará a aprender los casos particulares que le enseñamos, siendo incapaz de reconocer nuevos datos de entrada.
+
+
+
+```{r results='hide', warning=FALSE, message=FALSE}
+annFit <- train(leyenda ~ ., data = training,
+                method = "nnet",
+                preProcess = c("center", "scale"),
+                trControl = fitControl)
+```
+
+```{r}
+print (annFit)
+```
+La siguiente figura muestra la relación entre pesos y capas ocultas de la red.
+En este ejemplo la mejor configuración del modelo ANN se obtiene con 5 nodos y un peso igual a 0.1.
+
+```{r}
+plot (annFit)
+```
+Así, la configuración del modelo ANN es:
+- Se ha entrenado con 10 variables (las 10 bandas espectrales de Sentinel 2)
+- 5 nodos en la capa oculta de la red
+- 9 clase para la capa de salida
+
+```{r}
+annFit$finalModel
+```
+Si deseamos visualizar la red emplearemos la función **plotnet**.
+```{r}
+plotnet(annFit$finalModel)
+```
+
+Y mediante la función **olden** podemos analizar a importancia relativa de las variables predictoras. 
+En este caso la banda 1 es la que más importancia presenta, todo lo contrario que la banda 5.
+
+```{r}
+olden(annFit)
+```
+
+Y ahora, realizamos la predicción y el control de calidad sobre esta.
+```{r}
+pred_annFit<- predict(annFit, newdata = testing)
+confusionMatrix(data = pred_annFit, testing$leyenda)
+```
+
+<div id='id6' />
+#### Entrenar a un clasificador SVM (Support Vector Machine)
+
+Un clasificador SVM se basa en modelos estadísticos los cuales, con caracter tiene por objeto localizar una frontera de decisión (separación) óptima que maximice el margen entre dos clases. 
+
+La ubicación del límite de decisión dependerá solo de un subconjunto de puntos de datos de entrenamiento que están más cerca de él. Este subconjunto de puntos de datos de entrenamiento más cercanos al límite de decisión se conoce como vectores de soporte. A lo largo del tiempo han aparecido evolutivos incorporando funciones de coste, funciones para permitir límites de clase no lineales. 
+
+Además, funciones polinómicas,  base radial o  tangente hiperbólica, se desarrollaron para transformar el conjunto de datos de entrenamiento en un espacio de características de mayor dimensión para los problemas de clasificación no lineal.
+
+Las *ventajas* de un clasificador SVM son:
+
+* Se elimina el problema de la posible suposición de distribución normal de los datos.
+
+* Uso de una funciones para resolver problemas complejos.
+
+* Se adapta relativamente bien a datos de alta dimensión. 
+
+No obstante, como *inconventiente*, este clasificador necesita de más tiempo de entrenamiento.
+
+```{r results='hide', warning=FALSE, message=FALSE}
+svm_model<-train(leyenda~.,data=training,
+                  method = "svmRadial",
+                  trControl = fitControl,
+                  preProc = c("center", "scale"),
+                  tuneLength = 3)
+```
+Al hacer una impresión del modelo se observa como este tiene una calidad igual a 0.36 y un coste igual a 1.
+```{r}
+print (svm_model)
+```
+
+```{r}
+plot (svm_model)
+```
+El siguiente paso es mostrar la importancia de las variables de entrada
+```{r}
+svm_varImp <- varImp(svm_model, compete = FALSE)
+plot(svm_varImp)
+
+```
+
+Y finalmente realizar un control de calidad
+```{r}
+pred_svm<- predict(svm_model, newdata = testing)
+confusionMatrix(data = pred_svm, testing$leyenda)
+```
+
+<div id='id7' />
+#### Entrenar a un clasificador RF (Random Forest)
+
+El clasificador RF es un método de aprendizaje automático de conjunto, que utiliza el muestreo bootstrap para construir muchos modelos de árboles de decisión individuales. 
+
+Usa un subconjunto aleatorio de variables predictoras (por ejemplo, las bandas Sentinel) para dividir los datos de observación en subconjuntos homogéneos, que se utilizan para construir cada modelo de árbol de decisión y una predicción. Luego, se promedian las predicciones del modelo de árbol de decisión individual para producir el etiquetado final.
+
+El clasificador RF se ha utilizado con éxito para la clasificación de imágenes de teledetección porque presentan estas *ventajas*: 
+
+* Permiten manejar grandes cantidades de datos.
+
+* Están libres de supuestos de distribución normal.
+
+* Son robustos a los valores atípicos y al ruido 
+
+Sin embargo, como *inconventientes*:
+
+* No es fácil interpretar los resultados del modelo RF. 
+
+* Esta sesgado a favor de las variables predictoras con muchos niveles de categorías diferentes.
+
+```{r results='hide', warning=FALSE, message=FALSE}
+rf_model<-train(leyenda~.,data=training, method="rf",
+                trControl=fitControl,
+                 prox=TRUE,
+                 fitBest = FALSE,
+                 returnData = TRUE)
+```
+
+```{r}
+print(rf_model)
+```
+
+```{r}
+plot(rf_model)
+```
+
+```{r}
+rf_model$finalModel
+```
+
+```{r}
+rf_varImp <- varImp(rf_model, compete = FALSE)
+plot(rf_varImp)
+```
+Como en los clasificadores estudiados anteriormente realizaremos un control de calidad.
+```{r}
+pred_rf <- predict(rf_model$finalModel,
+            newdata = testing)
+```
+
+```{r}
+confusionMatrix(data = pred_rf, testing$leyenda)
+```
+
+<div id='id8' />
+#### Comparacón de los clasificadores estudiados
+La comparación se realizará siguiendo una correlación cruzada, empleando para esto la función **resample()**.
+```{r}
+resamps <- resamples(list(knn = knnFit,
+                          ann = annFit,
+                          svm = svm_model,
+                          rf = rf_model))
+```
+
+Representamos mediante un boxplot los valores de accuracy y kappa para realizar una evaluación de la calidad entre clasificadores empleados.
+
+```{r}
+bwplot(resamps, layout = c(3, 1))
+
+```
+
+A continuación se realizará la predicción de cada uno de los clasificadores anteriormente desarrollados.
+
+```{r}
+LC_knnFit <-predict(sentinel_o,knnFit)
+LC_ann <-predict(sentinel_o,annFit)
+LC_svm <-predict(sentinel_o,svm_model)
+LC_rf <-predict(sentinel_o,rf_model)
+```
+
+<div id='id9' />
+### Clasificación digital empleando datos multitemporales
+
+El objetivo es obtener una clasificación de la misma zona de estudio que en el tutorial 1 pero en este caso considerando datos multitemporales correspondientes a tres escenas de Sentinel 2: primeravera, verano y otoño.
+
+Vamos en primer lugar a generar un *rasterstack* según fecha.
+```{r}
+dir_in='./Material_practicas/Sentinel/'
+archivos <-list.files(paste(dir_in,"o",sep="")
+                      ,pattern = ".tif",
+                      full.names = TRUE)
+sentinel_o <- stack(archivos)
+
+archivos <-list.files(paste(dir_in,"p",sep="")
+                      ,pattern = ".tif",
+                      full.names = TRUE)
+sentinel_p <- stack(archivos)
+
+archivos <-list.files(paste(dir_in,"v",sep="")
+                      ,pattern = ".tif",
+                      full.names = TRUE)
+sentinel_v <- stack(archivos)
+```
+
+```{r}
+plotRGB(sentinel_o,r=7,g=2,b=3,stretch="lin")
+plotRGB(sentinel_p,r=7,g=2,b=3,stretch="lin")
+plotRGB(sentinel_v,r=7,g=2,b=3,stretch="lin")
+```
+
+Crearemos a continuación un **rasterstack** resultante de las escenas Sentinel 2 de las tres fechas, teniendo un total de 30 bandas espectrales (10 por cada una de las fechas)
+```{r}
+sentinel <- stack(sentinel_o,sentinel_p,sentinel_v)
+```
+
+A partir de aquí, el desarrollo del clasificador será exactamente igual que en el caso de trabajar con una imagen, salvo que el tiempo de procesado será mayor

@@ -1,0 +1,1134 @@
+---
+title: "Clasificacion Supervisada por método Random Forest"
+author: "Jessica Bernal"
+date: "25/3/2022"
+output: html_document
+---
+
+
+**Contenido:**
+
+1. [Introducción](#id1)
+2. [Creación muestreo](#id2)
+3. [Clasficación supervisada](#id3)
+4. [Clasificación digital empleando datos multitemporales](#id4)
+
+<div id='id1' />
+
+### 1. Introducción
+
+
+El objetivo de esta tarea es clasificar una extracto de una escena Sentinel 2 usando el clasificadores de machine learning Random Forest.
+
+
+En primer lugar, cargamos los paquetes que se vamos a emplear en esta tarea:
+
+```{r, results='hide', warning=FALSE, message=FALSE}
+library(sp)
+library(rgdal)
+library(raster)
+library(reshape)
+library(grid)
+library(gridExtra)
+library(RStoolbox)
+library(caret)
+library(rasterVis)
+library(corrplot)
+library(doParallel)
+library(NeuralNetTools)
+library(tidyr)
+library(stringr)
+library(e1071)
+library(sf)
+library (mapview) 
+```
+
+
+El siguiente paso consistirá en definir el directorio de trabajo donde se localizarán nuestras imágenes. Los datos se corresponden con una escena Sentinel 2 (fichero denominado sentinel_o_bxx.tif, siendo xx el número de la banda)
+
+
+```{r, results='hide', warning=FALSE, message=FALSE}
+setwd("C:/Geoforest/Tec_Clasif")
+dir_in_o<-"./Material_practicas/Sentinel/O"
+dir_in_p<-"./Material_practicas/Sentinel/P"
+dir_in_v<-"./Material_practicas/Sentinel/V"
+```
+
+A continuación, creamos una lista con los nombres de los archivos alojados en el directorio de trabajo, y posteriormente un rasterstack para las escenas de otoño (o), primavera (p) y verano (v):
+
+```{r}
+rasList_o <- list.files(dir_in_o,pattern="tif",
+                      full.names = TRUE)
+
+sentinel_o <- stack(rasList_o)
+
+rasList_p <- list.files(dir_in_p,pattern="tif",
+                      full.names = TRUE)
+
+sentinel_p <- stack(rasList_p)
+
+rasList_v <- list.files(dir_in_v,pattern="tif",
+                      full.names = TRUE)
+
+sentinel_v <- stack(rasList_v)
+```
+
+Una vez generado, vamos a proceder a comprobar los atributos de la escena
+```{r}
+sentinel_o
+```
+```{r}
+sentinel_p
+```
+
+```{r}
+sentinel_v
+```
+
+
+
+
+A continuación, se van a generar los gráficos de densidad e histogramas. Esto puede hacer individualmente para cada una de las bandas: 
+```{r}
+gdensidad=ggplot(sentinel_o,aes(sentinel_o_b01))+geom_density()
+ghistograma=ggplot(sentinel_o,aes(sentinel_o_b01))+geom_histogram()
+
+print (gdensidad)
+print (ghistograma)
+```
+
+O de todas las bandas, generando un gráfico por cada una de ellas y posteriormente componerlos en una sola figura
+```{r}
+#Escena Otoño
+gdens1=ggplot(sentinel_o,aes(sentinel_o_b01))+geom_density()
+gdens2=ggplot(sentinel_o,aes(sentinel_o_b02))+geom_density()
+gdens3=ggplot(sentinel_o,aes(sentinel_o_b03))+geom_density()
+gdens4=ggplot(sentinel_o,aes(sentinel_o_b04))+geom_density()
+gdens5=ggplot(sentinel_o,aes(sentinel_o_b05))+geom_density()
+gdens6=ggplot(sentinel_o,aes(sentinel_o_b06))+geom_density()
+gdens7=ggplot(sentinel_o,aes(sentinel_o_b07))+geom_density()
+gdens8=ggplot(sentinel_o,aes(sentinel_o_b08))+geom_density()
+gdens9=ggplot(sentinel_o,aes(sentinel_o_b09))+geom_density()
+gdens10=ggplot(sentinel_o,aes(sentinel_o_b10))+geom_density()
+
+grid.arrange(gdens1,gdens2,gdens3,gdens4,gdens5,gdens6,gdens7,gdens8,gdens9,gdens10,ncol=4,nrow=4)
+```
+```{r}
+#Escena Primavera (teniendo grabada la imagen anterior, vamos a sobreescribir para no cargar en exceso el entorno de trabajo)
+gdens1=ggplot(sentinel_p,aes(sentinel_p_b01))+geom_density()
+gdens2=ggplot(sentinel_p,aes(sentinel_p_b02))+geom_density()
+gdens3=ggplot(sentinel_p,aes(sentinel_p_b03))+geom_density()
+gdens4=ggplot(sentinel_p,aes(sentinel_p_b04))+geom_density()
+gdens5=ggplot(sentinel_p,aes(sentinel_p_b05))+geom_density()
+gdens6=ggplot(sentinel_p,aes(sentinel_p_b06))+geom_density()
+gdens7=ggplot(sentinel_p,aes(sentinel_p_b07))+geom_density()
+gdens8=ggplot(sentinel_p,aes(sentinel_p_b08))+geom_density()
+gdens9=ggplot(sentinel_p,aes(sentinel_p_b09))+geom_density()
+gdens10=ggplot(sentinel_p,aes(sentinel_p_b10))+geom_density()
+
+grid.arrange(gdens1,gdens2,gdens3,gdens4,gdens5,gdens6,gdens7,gdens8,gdens9,gdens10,ncol=4,nrow=4)
+```
+```{r}
+#Escena Verano
+gdens1=ggplot(sentinel_v,aes(sentinel_v_b01))+geom_density()
+gdens2=ggplot(sentinel_v,aes(sentinel_v_b02))+geom_density()
+gdens3=ggplot(sentinel_v,aes(sentinel_v_b03))+geom_density()
+gdens4=ggplot(sentinel_v,aes(sentinel_v_b04))+geom_density()
+gdens5=ggplot(sentinel_v,aes(sentinel_v_b05))+geom_density()
+gdens6=ggplot(sentinel_v,aes(sentinel_v_b06))+geom_density()
+gdens7=ggplot(sentinel_v,aes(sentinel_v_b07))+geom_density()
+gdens8=ggplot(sentinel_v,aes(sentinel_v_b08))+geom_density()
+gdens9=ggplot(sentinel_v,aes(sentinel_v_b09))+geom_density()
+gdens10=ggplot(sentinel_v,aes(sentinel_v_b10))+geom_density()
+
+grid.arrange(gdens1,gdens2,gdens3,gdens4,gdens5,gdens6,gdens7,gdens8,gdens9,gdens10,ncol=4,nrow=4)
+```
+Vamos a limpiar el entorno de trabajo una vez analizada y guardada la información:
+
+```{r}
+remove(gdens1,gdens2,gdens3,gdens4,gdens5,gdens6,gdens7,gdens8,gdens9,gdens10)
+```
+
+<div id='id2' />
+### 2. Creación muestreo
+
+Al ser una clasificación supervisada necesitaremos aportar al clasificador la información necesaria para realizar las fases de entrenamiento y validación. Para ello, tenemos descargado previamiente nuestro MFE con geometría poligonal, lo que nos ofrece dos opciones a la hora de continuar:
+
+* Opción 1: Preparación de los datos desde un software externo, por ejemplo QGIS, y luego leerlo en R.
+
+* Opción 2: Preparación de los datos desde R.
+
+En nuestro caso se trabajará con la segunda opción. Para ello, comenzamos generando una semilla para garantizar la repetitividad de los resultados. Seguidamente llamaremos a nuestro shapefile del MFE.
+
+```{r}
+set.seed(123)
+MFE=st_read('./Material_practicas/MFE/MFE.shp')
+
+mapview (MFE,zcol='leyenda')
+```
+
+Con objeto de obtener una muestra balanceada, se va a determinar el total de la superficie ocupada por cada clase de la leyenda, repartiendo el tamaño de la muestra proporcional a la superficie ocupada.
+
+```{r}
+clases = unique(MFE$leyenda)
+
+area_total = sum(st_area(MFE))
+area_clases=0
+for (i in 1:length(clases)) {
+  geom_clase=MFE[which(MFE$leyenda == clases[i],arr.ind=FALSE),]
+  area_clases[i]=sum(st_area(geom_clase))
+}
+```
+
+Fijamos un tamaño total de muestreo igual a 500 puntos de tal forma que cada clase contenga el siguiente número de muestras:
+
+```{r}
+num_muestras= as.integer(500*area_clases/area_total)
+print(num_muestras)
+```
+
+Observamos que no hay muestras en todas las clases, que hay clases con un número elevado y otras en las que el número es muy reducido o directamente cero.
+
+Aun sabiendo que no es correcto, en lugar de establecer el muestreo atendiendo al criterio anterior vamos a seleccionar un número fijo de muestras para todas las clases. Posteriormente, se determinará una leyenda adecuada a la variabilidad espacial y espectral de las clases presentes en la escena.
+
+Procedemos pues a realizar un muestreo sobre el MFE de tipo aleatorio, extrayendo la información temática a partir de la función **st_join**.
+
+```{r}
+puntos.ref <- st_sample(MFE, c(50,50,50,50,50,50,50,50,50,50,50,50,50), type='random',exact=TRUE) #Generamos una lista de puntos de forma aleatoria
+puntos.ref<-st_sf(puntos.ref) #Convertimos la lista en un spatial feature
+
+puntos.ref<-st_join(puntos.ref,MFE) #Cruzamos los datos
+puntos.ref_backup <- puntos.ref
+mapview(puntos.ref, zcol='leyenda')
+```
+
+Veamos su representación sobre el MFE:
+```{r}
+mapview(MFE, zcol='leyenda')+mapview(puntos.ref,zcol='leyenda')
+```
+
+A continuación, obtenemos la firma espectral de cada una de las clases. Para ello es necesario extraer los valores de reflectancia para cada punto en cada una de las bandas mediante el comando **extract**. Seguidamente, se determinarán los valores medios de reflectancia por clase y banda. Estos datos los representaremos mediante la librería *ggplot* , convirtiéndolos a un tipo de dato dataframe. 
+
+```{r}
+puntos.ref=as_Spatial(puntos.ref)
+puntos.ref@data$leyenda=as.factor(puntos.ref@data$leyenda)
+
+reflectancia_o<- as.data.frame(raster::extract(sentinel_o,puntos.ref))
+reflectancia_p<- as.data.frame(raster::extract(sentinel_p,puntos.ref))
+reflectancia_v<- as.data.frame(raster::extract(sentinel_v,puntos.ref))
+```
+
+Comprobamos los valores extraidos:
+```{r}
+head(reflectancia_o)
+```
+```{r}
+head(reflectancia_p)
+```
+
+```{r}
+head(reflectancia_v)
+```
+
+
+A continuación, calculamos el valor medio de reflectancia de cada clase para cada banda. Para ello, usaremos la función **aggregate()** para unir los puntos de entrenamiento por clase.
+```{r}
+mean_reflectancia_o <-aggregate(reflectancia_o,list(puntos.ref$leyenda),mean,na.rm = TRUE)
+mean_reflectancia_p <-aggregate(reflectancia_p,list(puntos.ref$leyenda),mean,na.rm = TRUE)
+mean_reflectancia_v <-aggregate(reflectancia_v,list(puntos.ref$leyenda),mean,na.rm = TRUE)
+```
+
+Comprobamos los valores medios obtenidos
+```{r}
+head(mean_reflectancia_o)
+```
+
+```{r}
+head(mean_reflectancia_p)
+```
+
+```{r}
+head(mean_reflectancia_v)
+```
+
+
+Por la forma en la que estan almacenados los datos en el dataframe (cada banda se almacena en una columna) es necesario modificarlo para que esten todos los datos de reflectancias registrados en una columna, creando una nueva columna donde se registre la banda de donde proceden, de tal forma que la información aparecerá ordenada por filas.
+```{r}
+mean_reflectance2_o <- gather(mean_reflectancia_o, key="banda", value="reflectance",sentinel_o_b01:sentinel_o_b10)
+
+mean_reflectance2_p <- gather(mean_reflectancia_p, key="banda", value="reflectance",sentinel_p_b01:sentinel_p_b10)
+
+mean_reflectance2_v <- gather(mean_reflectancia_v, key="banda", value="reflectance",sentinel_v_b01:sentinel_v_b10)
+```
+
+Si analizamos el contenido del dataframe vemos que no se dispone de un campo numérico que permita ordenar las bandas a la hora de pintarlas. Por ello se va a crear un nuevo campo de tipo numérico con el número de la banda.
+```{r}
+mean_reflectance2_o$banda_num=(as.numeric(str_replace(mean_reflectance2_o$banda,"sentinel_o_b","")))
+mean_reflectance2_p$banda_num=(as.numeric(str_replace(mean_reflectance2_p$banda,"sentinel_p_b","")))
+mean_reflectance2_v$banda_num=(as.numeric(str_replace(mean_reflectance2_v$banda,"sentinel_v_b","")))
+```
+
+Finalmente, mediante **ggplot** generamos un gráfico de tipo **geom_line** para ver la firma espectral de cada una de clases. 
+
+
+```{r}
+#Escena Otoño
+ggplot(mean_reflectance2_o,aes(x=banda_num,y=reflectance))+
+  geom_line(aes(colour = Group.1))+theme_bw()
+```
+```{r}
+#Escena Primavera
+ggplot(mean_reflectance2_p,aes(x=banda_num,y=reflectance))+
+  geom_line(aes(colour = Group.1))+theme_bw()
+```
+```{r}
+#Escena Verano
+ggplot(mean_reflectance2_v,aes(x=banda_num,y=reflectance))+
+  geom_line(aes(colour = Group.1))+theme_bw()
+```
+
+
+Observamos que muchas de las clases presentan un comportamiento muy similar y por tanto la calidad temática de los resultados de la clasificación a priori pueden ser baja. Por ello, habría que modificar la leyenda:
+*En esta tarea se ofrece un ejemplo de modificación de leyenda que requiere revisión, como confirman los resultados de la clasificación*
+
+```{r}
+
+MFE <- cbind(MFE, Leyenda2=c("Quercineas", "Algarrobos", "Veg. Dispersa", "Veg. Dispersa", "Veg. Dispersa","Caducifolios", "Veg. Ribera", "Castaños","Quercineas", "Matorral", "Eucalipto", "Bosque Coniferas", "Bosques Mixtos", "Bosques Mixtos", "Bosques Mixtos", "Bosque Coniferas","Bosque Coniferas","Bosque Coniferas","Bosque Coniferas", "Pinsapos", "Matorral", "Suelos"))
+
+#Comprobamos y después eliminamos la columna de leyenda previa
+MFE$leyenda <- NULL
+
+head(MFE)
+```
+
+Visualizamos el nuevo mapa:
+
+```{r}
+set.seed(123)
+mapview (MFE,zcol='Leyenda2')
+```
+Determinamos el total de la superficie ocupada por cada clase de la leyenda, repartiendo el tamaño de la muestra proporcional a la superficie ocupada:
+
+```{r}
+clases = unique(MFE$Leyenda2)
+
+area_total = sum(st_area(MFE))
+area_clases=0
+for (i in 1:length(clases)) {
+  geom_clase=MFE[which(MFE$Leyenda2 == clases[i],arr.ind=FALSE),]
+  area_clases[i]=sum(st_area(geom_clase))
+}
+```
+
+Fijamos un tamaño total de muestreo igual a 500 puntos de tal forma que cada clase contenga el siguiente número de muestras:
+
+```{r}
+num_muestras= as.integer(500*area_clases/area_total)
+print(num_muestras)
+```
+De nuevo, seleccionamos un número fijo de muestras para todas las clases.
+
+
+```{r}
+puntos.ref <- st_sample(MFE, c(50,50,50,50,50,50,50,50,50,50,50,50,50), type='random',exact=TRUE) #Generamos una lista de puntos de forma aleatoria
+puntos.ref<-st_sf(puntos.ref) #Convertimos la lista en un spatial feature
+
+puntos.ref<-st_join(puntos.ref,MFE) #Cruzamos los datos
+puntos.ref_backup <- puntos.ref
+mapview(puntos.ref, zcol='Leyenda2')
+```
+
+Veamos su representación sobre el MFE:
+```{r}
+mapview(MFE, zcol='Leyenda2')+mapview(puntos.ref,zcol='Leyenda2')
+```
+
+
+Obtenemos la firma espectral de cada una de las clases.
+
+```{r}
+puntos.ref=as_Spatial(puntos.ref)
+puntos.ref@data$Leyenda2=as.factor(puntos.ref@data$Leyenda2)
+
+reflectancia_o<- as.data.frame(raster::extract(sentinel_o,puntos.ref))
+reflectancia_p<- as.data.frame(raster::extract(sentinel_p,puntos.ref))
+reflectancia_v<- as.data.frame(raster::extract(sentinel_v,puntos.ref))
+```
+
+Comprobamos los valores extraidos:
+```{r}
+head(reflectancia_o)
+```
+
+
+```{r}
+head(reflectancia_p)
+```
+
+```{r}
+head(reflectancia_v)
+```
+
+
+Valor medio de reflectancia de cada clase para cada banda. 
+```{r}
+mean_reflectancia_o <-aggregate(reflectancia_o,list(puntos.ref$Leyenda2),mean,na.rm = TRUE)
+mean_reflectancia_p <-aggregate(reflectancia_p,list(puntos.ref$Leyenda2),mean,na.rm = TRUE)
+mean_reflectancia_v <-aggregate(reflectancia_v,list(puntos.ref$Leyenda2),mean,na.rm = TRUE)
+```
+
+Comprobamos los valores medios obtenidos
+```{r}
+head(mean_reflectancia_o)
+```
+
+```{r}
+head(mean_reflectancia_p)
+```
+
+```{r}
+head(mean_reflectancia_v)
+```
+
+
+Ponemos los datos de reflectancias registrados en una columna:
+```{r}
+mean_reflectance2_o <- gather(mean_reflectancia_o, key="banda", value="reflectance",sentinel_o_b01:sentinel_o_b10)
+
+mean_reflectance2_p <- gather(mean_reflectancia_p, key="banda", value="reflectance",sentinel_p_b01:sentinel_p_b10)
+
+mean_reflectance2_v <- gather(mean_reflectancia_v, key="banda", value="reflectance",sentinel_v_b01:sentinel_v_b10)
+```
+
+Creamos un nuevo campo de tipo numérico con el número de la banda.
+```{r}
+mean_reflectance2_o$banda_num=(as.numeric(str_replace(mean_reflectance2_o$banda,"sentinel_o_b","")))
+mean_reflectance2_p$banda_num=(as.numeric(str_replace(mean_reflectance2_p$banda,"sentinel_p_b","")))
+mean_reflectance2_v$banda_num=(as.numeric(str_replace(mean_reflectance2_v$banda,"sentinel_v_b","")))
+```
+
+Finalmente, visualizamos la firma espectral de cada una de clases: 
+
+
+```{r}
+#Escena Otoño
+ggplot(mean_reflectance2_o,aes(x=banda_num,y=reflectance))+
+  geom_line(aes(colour = Group.1))+theme_bw()
+```
+
+
+```{r}
+#Escena Primavera
+ggplot(mean_reflectance2_p,aes(x=banda_num,y=reflectance))+
+  geom_line(aes(colour = Group.1))+theme_bw()
+```
+
+```{r}
+#Escena Verano
+ggplot(mean_reflectance2_v,aes(x=banda_num,y=reflectance))+
+  geom_line(aes(colour = Group.1))+theme_bw()
+```
+
+<div id='id3' />
+### 3. Clasificación  supervisada
+
+Para esta tarea utilizaremos uno de los operadores clásicos empleados en Teledetección para clasificar imágenes, en este caso un clasificador por el método de Random Forest. Para ello se empleará la función **superClass** dentro del paquete RStoolbox. De entre los parámetros a incluir en la función destacar que:
+
+* trainData contiene el muestreo a emplear en la clasificación.
+
+* trainPartition: contiene un valor indicando el tamaño de la muestra destinada al entrenamiento.
+
+* model indica el tipo de clasficación que se desea realizar, por defecto la función aplica un random forest (rf), que es el que realizaremos.
+
+#### Escena de Otoño 
+```{r results='hide', warning=FALSE, message=FALSE}
+#puntos.ref<- as_Spatial(puntos.ref)
+puntos.ref@data$Leyenda2=as.factor(puntos.ref@data$Leyenda2)
+
+R.Forest<- superClass(sentinel_o, 
+                      trainData = puntos.ref, 
+                      trainPartition =0.5,
+                      responseCol = "Leyenda2",
+                      model = "rf") #Random Forest
+```
+
+El resultado de la clasificación se muestra recogido en una variable de tipo lista. En el quinto elemento de la lista se recoge el resultado cartográfico mediante un **rasterLayer**, pudiendo ser representado por ejemplo mediante la función **plot**.
+```{r}
+leyenda_colores <- viridis::viridis(13)
+plot(R.Forest$map,
+     col=leyenda_colores,
+     legend = FALSE)
+legend("topright",cex=0.65, y.intersp = 0.55,x.intersp = 0.5,
+        legend = levels(as.factor(puntos.ref$Leyenda2)),
+        fill = leyenda_colores ,title = "",
+        inset=c(0,0))
+```
+
+Además del producto cartográfico es necesario realizar una evaluación de la calidad temática. Para ello mediante en el segundo elemento de la lista, denominado **modelFit** se encuentra la matriz de confusión resultante así como los valores de exactitud global y kapp obtenidos en el entrenamiento. Por otro lado en el elemento **results** aparecen recogidos estos elementos de calidad global y su desviación. 
+
+```{r}
+R.Forest$modelFit
+```
+
+
+
+```{r}
+R.Forest$model$results
+```
+
+
+
+#### Escena de Primavera
+
+```{r results='hide', warning=FALSE, message=FALSE}
+#puntos.ref<- as_Spatial(puntos.ref)
+puntos.ref@data$Leyenda2=as.factor(puntos.ref@data$Leyenda2)
+
+R.Forest<- superClass(sentinel_p, 
+                      trainData = puntos.ref, 
+                      trainPartition =0.5,
+                      responseCol = "Leyenda2",
+                      model = "rf") #Random Forest
+```
+
+Representamos el resultado de la clasificación.
+```{r}
+leyenda_colores <- viridis::viridis(13)
+plot(R.Forest$map,
+     col=leyenda_colores,
+     legend = FALSE)
+legend("topright",cex=0.65, y.intersp = 0.55,x.intersp = 0.5,
+        legend = levels(as.factor(puntos.ref$Leyenda2)),
+        fill = leyenda_colores ,title = "",
+        inset=c(0,0))
+```
+
+Evaluación de la calidad temática. Matriz y valores de exactitud global y kapp obtenidos en el entrenamiento. 
+
+```{r}
+R.Forest$modelFit
+
+```
+
+Calidad global y desviación del modelo:
+
+```{r}
+R.Forest$model$results
+```
+
+#### Escena de verano
+
+```{r results='hide', warning=FALSE, message=FALSE}
+#puntos.ref<- as_Spatial(puntos.ref)
+puntos.ref@data$Leyenda2=as.factor(puntos.ref@data$Leyenda2)
+
+R.Forest<- superClass(sentinel_v, 
+                      trainData = puntos.ref, 
+                      trainPartition =0.5,
+                      responseCol = "Leyenda2",
+                      model = "rf") 
+```
+
+Representamos el resultado de la clasificación.
+```{r}
+leyenda_colores <- viridis::viridis(13)
+plot(R.Forest$map,
+     col=leyenda_colores,
+     legend = FALSE)
+legend("topright",cex=0.65, y.intersp = 0.55,x.intersp = 0.5,
+        legend = levels(as.factor(puntos.ref$Leyenda2)),
+        fill = leyenda_colores ,title = "",
+        inset=c(0,0))
+```
+
+Evaluamos la calidad temática. 
+
+```{r}
+#Matriz y valores de exactitud global y kapp obtenidos en el entrenamiento.
+R.Forest$modelFit
+```
+
+
+```{r}
+R.Forest$model$results
+```
+
+
+
+#### Creación de un dataframe con los puntos del entrenamiento etiquetados y con sus valores de reflectancia
+
+En el paso anterior se generó un dataframe con los valores medios de reflectancia para cada clase. Ahora se va a generar un dataframe que contendrá para cada punto su etiqueta y los valores de reflectancia de todas y cada una de las bandas.
+Advertir que el objeto *train_data@data* apunta a toda esa información, de forma que *@* es un operador especial que permite acceder a un objeto dentro de otro objeto.
+Nota: Se va a crear una variable denominada **train_data** igual a **puntos.ref** por si el trascurso de la tarea se comete un error, pudiendo tener así un backup de los datos hasta este punto.
+
+#### Escena de Otoño:
+
+```{r}
+train_data_o = as_Spatial(puntos.ref_backup)
+train_data_o@data$Leyenda2=as.factor(puntos.ref@data$Leyenda2)
+train_data_o@data=data.frame(train_data_o@data,reflectancia_o[match(rownames(train_data_o@data),rownames(reflectancia_o)),])
+```
+Veamos el resultado obtenido.
+```{r}
+str(train_data_o)
+```
+
+De entre las variables, diez corresponden a las bandas espectrales, siendo estas últimas nuestras variables predictoras de la variable respuesta consistente en las clases.
+
+Podemos ver un resumen estadístico de la variable:
+```{r}
+summary(train_data_o@data)
+```
+En este caso se observa como no hay datos ausentes (*NA*). En caso de que aparecieran es importante eliminarlos, empleando para ello la función **na.omit()**. Una vez aplicada podemos emplear la función **complete.cases()** para comprobar que se han borrado.
+```{r}
+train_data_o@data= na.omit(train_data_o@data)
+complete.cases(train_data_o@data)
+```
+
+#### Escena de primavera
+
+
+```{r}
+train_data_p = as_Spatial(puntos.ref_backup)
+train_data_p@data$Leyenda2=as.factor(puntos.ref@data$Leyenda2)
+train_data_p@data=data.frame(train_data_p@data,reflectancia_p[match(rownames(train_data_p@data),rownames(reflectancia_p)),])
+```
+Veamos el resultado obtenido.
+```{r}
+str(train_data_p)
+```
+Resumen estadístico de la variable.
+```{r}
+summary(train_data_p@data)
+```
+No hay datos ausentes (*NA*)
+
+#### Escena de verano
+
+
+```{r}
+train_data_v = as_Spatial(puntos.ref_backup)
+train_data_v@data$Leyenda2=as.factor(puntos.ref@data$Leyenda2)
+train_data_v@data=data.frame(train_data_v@data,reflectancia_v[match(rownames(train_data_v@data),rownames(reflectancia_v)),])
+```
+Veamos el resultado obtenido.
+```{r}
+str(train_data_v)
+```
+Resumen estadístico de la variable.
+```{r}
+summary(train_data_v@data)
+```
+No hay datos ausentes (*NA*). 
+
+
+#### Preparación del set de entrenamiento y testeo
+
+Es recomendable separar de forma aleatoria el set de entrenamiento inicial en 3 grupos: entrenamiento, validación y testeo. En este caso solo lo vamos a separar en los dos primeros. Para ello, en primer lugar es necesario establecer un valor predefinido de semilla empleando **set.seed()**.
+```{r}
+hre_seed<- 123
+set.seed(hre_seed)
+```
+Ahora, dividiremos nuestro set de entrenamiento inicial en entrenamiento y testeo usando para ello la función **createDataPartition()** del paquete *caret*. Por ejemplo, vamos a establecer que el 80% de los datos iniciales pasen a ser de entrenamiento y el 20% de test. Hay que recordar que el entrenamiento nos permitirá optimizar los parámetros iniciales del modelo mientras que los de testeo nos permitirán evaluar la calidad del mismo.
+
+Nota: Se ha establecido como variable *train_data_x@data$leyenda* pues es esta la que que contiene la etiqueta de las clases. Por otro lado el parámetro *p* contiene el porcentaje a emplear en la separación de la muestra. Finalmente, el parámetro *list* indica si devuelve una lista o una matriz, en nuestro caso indicaremos *FALSE* de forma que devuelve una matriz.
+
+Así, el resultado de la variable **inTraining** como podemos comprobar es una lista de valores núméricos indicando el índice de los elementos empleados para entrenamiento.
+
+
+```{r}
+# Escena de Otoño
+inTraining_o <- createDataPartition(train_data_o@data$Leyenda2, p=0.80,list=FALSE)
+
+training_o <-train_data_o@data[inTraining_o,]
+training_o=training_o[,-(1:4)] #Borramos columnas no necesarias
+
+testing_o <- train_data_o@data[-inTraining_o,]
+testing_o=testing_o[,-(1:4)] #Borramos columnas no necesarias
+```
+
+
+```{r}
+# Escena de Primavera
+inTraining_p <- createDataPartition(train_data_p@data$Leyenda2, p=0.80,list=FALSE)
+
+training_p <-train_data_p@data[inTraining_p,]
+training_p=training_p[,-(1:4)] #Borramos columnas no necesarias
+
+testing_p <- train_data_p@data[-inTraining_p,]
+testing_p=testing_p[,-(1:4)] #Borramos columnas no necesarias
+```
+
+
+```{r}
+# Escena de Verano
+inTraining_v <- createDataPartition(train_data_v@data$Leyenda2, p=0.80,list=FALSE)
+
+training_v <-train_data_v@data[inTraining_v,]
+training_v=training_v[,-(1:4)] #Borramos columnas no necesarias
+
+testing_v <- train_data_v@data[-inTraining_v,]
+testing_v=testing_v[,-(1:4)] #Borramos columnas no necesarias
+```
+
+
+
+#### Resumen estadistico de los set de entreneamiento y testeo
+
+Antes de comenzar el entrenamiento del clasificador de machine learning previo a la clasificación es necesario realizar un chequeo de los set de datos pues puede ser que las imágenes presenten problemas o que hayamos cometido errores en la identificación.
+Así, en primer lugar vamos a obtener un resumen estadístico de ambos set.
+```{r}
+summary(training_o)
+summary(training_p)
+summary(training_v)
+```
+
+```{r}
+summary(testing_o)
+summary(testing_p)
+summary(testing_v)
+```
+Posteriormente vamos a generar un grafico de densidades para cada clase / banda que permita representar la distribución de los datos. Esto va a permitirnos evaluar si hay una adecuada separabilidad entre las clases. Además permite determinar si el efecto cizalla en la distribución es acusado o no.
+Nota: Se han seleccionado los índices 2 al 11 pues en el caso de este ejemplo contienen los datos de reflectancia para cada punto en todas las bandas empleadas.
+
+```{r}
+#Escena de Otoño
+featurePlot(x=training_o[,2:11],
+            y=training_o$Leyenda2,
+            plot="density",
+            labels=c("Reflectancia","Distribucion densidades"),
+            layout=c(2,2))
+```
+
+```{r}
+#Escena de Primavera
+featurePlot(x=training_p[,2:11],
+            y=training_p$Leyenda2,
+            plot="density",
+            labels=c("Reflectancia","Distribucion densidades"),
+            layout=c(2,2))
+```
+
+```{r}
+#Escena de Verano
+featurePlot(x=training_v[,2:11],
+            y=training_v$Leyenda2,
+            plot="density",
+            labels=c("Reflectancia","Distribucion densidades"),
+            layout=c(2,2))
+```
+
+Por otro lado podemos calcular la cizalla mediante la función **skewness()** de la librería *e1071*. Nos aportará información sobre si la distribución es simétrica o no. Por lo general, una distribución es simétrica cuando el valor de skewness es 0 o próximo a 0.
+```{r}
+#Otoño
+skwenessvalues_o <- apply(training_o[,2:11],2,skewness)
+skwenessvalues_o
+```
+
+```{r}
+#Primavera
+skwenessvalues_p <- apply(training_p[,2:11],2,skewness)
+skwenessvalues_p
+```
+
+
+```{r}
+#Verano
+skwenessvalues_v <- apply(training_v[,2:11],2,skewness)
+skwenessvalues_v
+```
+Por otro lado, si se detecta alguna distribución bimodal puede ser indicativo de una posible presencia de errores groseros en el muestreo. De forma complementaria podemos representar los datos mediante cajas de bigotes con objeto de ver esta presencia.
+```{r}
+#Otoño
+featurePlot(x=training_o[,2:11],
+            y=training_o$Leyenda2,
+            plot="box",
+            layout=c(2,2))
+```
+
+
+```{r}
+#Primavera
+featurePlot(x=training_p[,2:11],
+            y=training_p$Leyenda2,
+            plot="box",
+            layout=c(2,2))
+```
+
+```{r}
+#Verano
+featurePlot(x=training_v[,2:11],
+            y=training_v$Leyenda2,
+            plot="box",
+            layout=c(2,2))
+```
+
+
+La posible presencia de errores groseros podría deberse por una parte a fallos humanos o tambien a la propia variabilidad del territorio y el comportamiento de las clases. Supongamos por ejemplo que contamos con las clases "uso agricola" y "suelo desnudo", es posible que estas dos clases presenten un comportamiento similar, siendo adecuado analizar la correlación entre bandas.
+
+A modo de ejemplo se presentan graficos de correlación entre dos clases y 6 bandas espectrales, viendo una clara correlación entre bandas.
+```{r}
+band1_2 <-ggplot(data=training_o,aes(sentinel_o_b01,sentinel_o_b02))+
+                   geom_point(aes(shape=Leyenda2,colour=Leyenda2))
+
+band1_3 <-ggplot(data=training_o,aes(sentinel_o_b01,sentinel_o_b03))+
+                   geom_point(aes(shape=Leyenda2,colour=Leyenda2))
+
+band1_4 <-ggplot(data=training_o,aes(sentinel_o_b01,sentinel_o_b04))+
+                   geom_point(aes(shape=Leyenda2,colour=Leyenda2))
+
+band1_5 <-ggplot(data=training_o,aes(sentinel_o_b01,sentinel_o_b05))+
+                   geom_point(aes(shape=Leyenda2,colour=Leyenda2))
+
+grid.arrange(band1_2,band1_3,band1_4,band1_5)
+```
+
+Numéricamente, mediante la función **cor()** calculamos la correlacion entre las bandas espectrales de la escena. El resultado puede ser "complejo" de analizar, siendo mejor una representación gráfica.
+```{r}
+bandcorrelaciones = cor(training_o[,2:11])
+```
+Esta sería la representación gráfica de la matriz de correlación
+```{r}
+corrplot(bandcorrelaciones,method="number")
+corrplot(bandcorrelaciones,method="number",type = "upper")
+corrplot(bandcorrelaciones,method="color",type="lower")
+```
+
+#### Definición de los parámetros del modelo para entrenamiento
+
+Este paso es uno de los mas importantes, pues de la correcta configuración de los parámetros dependerán nuestros resultados. Para ello, usaremos la función **trainControl()** dentro del paquete *caret*. Esta se va a encargar de definir la configuración óptima del modelo. La función presenta tres parámetros:
+
+  * method: "boot", "boot632", "optimism_boot", "boot_all", "cv", "repeatedcv", "LOOCV",etc...
+  
+  * number: establece el numero de partes o bloques a dividir el conjunto de datos del mismo tamaño.
+  
+  * repeat: número de repeticiones.
+
+La función selecciona el valor que da el mejor resultado.
+
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+                           number=5,
+                           repeats=5)
+
+```
+
+
+
+<div id='id4' />
+#### Entrenar a un clasificador RF (Random Forest)
+
+El clasificador RF es un método de aprendizaje automático de conjunto, que utiliza el muestreo bootstrap para construir muchos modelos de árboles de decisión individuales. 
+
+Usa un subconjunto aleatorio de variables predictoras (por ejemplo, las bandas Sentinel) para dividir los datos de observación en subconjuntos homogéneos, que se utilizan para construir cada modelo de árbol de decisión y una predicción. Luego, se promedian las predicciones del modelo de árbol de decisión individual para producir el etiquetado final.
+
+El clasificador RF se ha utilizado con éxito para la clasificación de imágenes de teledetección porque presentan estas *ventajas*: 
+
+* Permiten manejar grandes cantidades de datos.
+
+* Están libres de supuestos de distribución normal.
+
+* Son robustos a los valores atípicos y al ruido 
+
+Sin embargo, como *inconventientes*:
+
+* No es fácil interpretar los resultados del modelo RF. 
+
+* Esta sesgado a favor de las variables predictoras con muchos niveles de categorías diferentes.
+
+#### Escena de Otoño
+
+```{r results='hide', warning=FALSE, message=FALSE}
+rf_model_o<-train(Leyenda2~.,data=training_o, method="rf",
+                trControl=fitControl,
+                 prox=TRUE,
+                 fitBest = FALSE,
+                 returnData = TRUE)
+```
+
+```{r}
+print(rf_model_o)
+```
+
+
+```{r}
+plot(rf_model_o)
+```
+
+
+```{r}
+rf_model_o$finalModel
+```
+
+
+```{r}
+rf_varImp_o <- varImp(rf_model_o, compete = FALSE)
+plot(rf_varImp_o)
+```
+
+Realizaremos un control de calidad.
+```{r}
+pred_rf_o <- predict(rf_model_o$finalModel,
+            newdata = testing_o)
+```
+
+```{r}
+confusionMatrix(data = pred_rf_o, testing_o$Leyenda2)
+```
+#### Escena de Primavera
+
+```{r results='hide', warning=FALSE, message=FALSE}
+rf_model_p<-train(Leyenda2~.,data=training_p, method="rf",
+                trControl=fitControl,
+                 prox=TRUE,
+                 fitBest = FALSE,
+                 returnData = TRUE)
+```
+
+```{r}
+print(rf_model_p)
+```
+
+
+```{r}
+plot(rf_model_p)
+```
+
+
+```{r}
+rf_model_p$finalModel
+```
+
+
+```{r}
+rf_varImp_p <- varImp(rf_model_p, compete = FALSE)
+plot(rf_varImp_p)
+```
+
+Control de calidad:
+```{r}
+pred_rf_p <- predict(rf_model_p$finalModel,
+            newdata = testing_p)
+```
+
+```{r}
+confusionMatrix(data = pred_rf_p, testing_p$Leyenda2)
+```
+
+#### Escena de Verano
+
+```{r results='hide', warning=FALSE, message=FALSE}
+rf_model_v<-train(Leyenda2~.,data=training_v, method="rf",
+                trControl=fitControl,
+                 prox=TRUE,
+                 fitBest = FALSE,
+                 returnData = TRUE)
+```
+
+```{r}
+print(rf_model_v)
+```
+
+
+```{r}
+plot(rf_model_v)
+```
+
+
+```{r}
+rf_model_v$finalModel
+```
+
+
+```{r}
+rf_varImp_v <- varImp(rf_model_v, compete = FALSE)
+plot(rf_varImp_v)
+```
+
+realizaremos un control de calidad.
+```{r}
+pred_rf_v <- predict(rf_model_v$finalModel,
+            newdata = testing_v)
+```
+
+```{r}
+confusionMatrix(data = pred_rf_v, testing_v$Leyenda2)
+```
+
+
+
+<div id='id4'/>
+### 4. Clasificación digital empleando datos multitemporales
+
+El objetivo es obtener una clasificación de la misma zona de estudio que en el tutorial 1 pero en este caso considerando datos multitemporales correspondientes a tres escenas de Sentinel 2: primeravera, verano y otoño.
+
+
+```{r}
+#Otoño
+plotRGB(sentinel_o,r=7,g=2,b=3,stretch="lin")
+
+```
+```{r}
+
+#Primavera
+plotRGB(sentinel_p,r=7,g=2,b=3,stretch="lin")
+
+```
+
+
+```{r}
+#Verano
+plotRGB(sentinel_v,r=7,g=2,b=3,stretch="lin")
+```
+Crearemos a continuación un **rasterstack** resultante de las escenas Sentinel 2 de las tres fechas, teniendo un total de 30 bandas espectrales (10 por cada una de las fechas)
+
+```{r}
+sentinel <- stack(sentinel_o,sentinel_p,sentinel_v)
+```
+
+A partir de aquí, el desarrollo del clasificador será exactamente igual que en el caso de trabajar con una imagen, salvo que el tiempo de procesado será mayor.
+
+```{r results='hide', warning=FALSE, message=FALSE}
+#puntos.ref<- as_Spatial(puntos.ref)
+puntos.ref@data$Leyenda2=as.factor(puntos.ref@data$Leyenda2)
+
+R.Forest<- superClass(sentinel, 
+                      trainData = puntos.ref, 
+                      trainPartition =0.5,
+                      responseCol = "Leyenda2",
+                      model = "rf") 
+```
+
+
+```{r}
+leyenda_colores <- viridis::viridis(13)
+plot(R.Forest$map,
+     col=leyenda_colores,
+     legend = FALSE)
+legend("topright",cex=0.65, y.intersp = 0.55,x.intersp = 0.5,
+        legend = levels(as.factor(puntos.ref$Leyenda2)),
+        fill = leyenda_colores ,title = "",
+        inset=c(0,0))
+```
+
+
+Evaluación de la calidad temática:
+
+```{r}
+R.Forest$modelFit
+```
+
+
+
+```{r}
+R.Forest$model$results
+```
+
+
+#### Creación de un dataframe con los puntos del entrenamiento etiquetados y con sus valores de reflectancia
+
+```{r}
+reflectancia<- as.data.frame(raster::extract(sentinel,puntos.ref))
+train_data = as_Spatial(puntos.ref_backup)
+train_data@data$Leyenda2=as.factor(puntos.ref@data$Leyenda2)
+train_data@data=data.frame(train_data@data,reflectancia[match(rownames(train_data@data),rownames(reflectancia)),])
+```
+Veamos el resultado obtenido.
+```{r}
+str(train_data)
+```
+
+resumen estadístico de la variable:
+```{r}
+summary(train_data@data)
+```
+
+No hay datos ausentes (*NA*). 
+
+#### Preparación del set de entrenamiento y testeo
+
+```{r}
+hre_seed<- 123
+set.seed(hre_seed)
+```
+
+
+```{r}
+inTraining <- createDataPartition(train_data_o@data$Leyenda2, p=0.80,list=FALSE)
+
+training <-train_data@data[inTraining,]
+training=training[,-(1:4)] #Borramos columnas no necesarias
+
+testing <- train_data@data[-inTraining,]
+testing=testing[,-(1:4)] #Borramos columnas no necesarias
+```
+#### Resumen estadistico de los set de entreneamiento y testeo
+
+
+```{r}
+summary(training)
+
+```
+
+```{r}
+summary(testing)
+
+```
+
+```{r}
+
+featurePlot(x=training[,2:11],
+            y=training$Leyenda2,
+            plot="density",
+            labels=c("Reflectancia","Distribucion densidades"),
+            layout=c(2,2))
+```
+
+```{r}
+skwenessvalues <- apply(training[,2:11],2,skewness)
+skwenessvalues
+```
+
+```{r}
+featurePlot(x=training[,2:11],
+            y=training$Leyenda2,
+            plot="box",
+            layout=c(2,2))
+```
+
+#### Entrenar clasificador
+```{r results='hide', warning=FALSE, message=FALSE}
+rf_model<-train(Leyenda2~.,data=training, method="rf",
+                trControl=fitControl,
+                 prox=TRUE,
+                 fitBest = FALSE,
+                 returnData = TRUE)
+```
+
+```{r}
+print(rf_model)
+```
+
+```{r}
+plot(rf_model)
+```
+
+```{r}
+rf_model$finalModel
+```
+
+
+```{r}
+rf_varImp <- varImp(rf_model, compete = FALSE)
+plot(rf_varImp)
+```
+
+Realizaremos un control de calidad.
+```{r}
+pred_rf <- predict(rf_model$finalModel,
+            newdata = testing)
+```
+
+```{r}
+confusionMatrix(data = pred_rf, testing$Leyenda2)
+```

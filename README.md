@@ -18,7 +18,7 @@ Cada directorio dentro del repositorio corresponde a uno de estos algoritmos e i
 Para utilizar estos ejercicios, puedes clonar este repositorio y abrir los archivos .Rmd en tu entorno R preferido. No he actualizado estos ejercicios desde que los creé, así que considera esto como un archivo de mi viaje de aprendizaje más que como un recurso de aprendizaje actualizado.
 
 ## Contribución
-Dado que este repositorio está destinado a ser un archivo personal (registro de las actividades realizas en el marco del Máster Oficial [Geoforest](https://mastergeoforest.es/)), no estoy buscando contribuciones activamente. Sin embargo, si encuentras algún error o tienes alguna sugerencia de mejora, no dudes en abrir un issue.
+Dado que este repositorio está destinado a ser un archivo personal (registro de las actividades realizadas en el marco del Máster Oficial [Geoforest](https://mastergeoforest.es/)), no estoy buscando contribuciones activamente. Sin embargo, si encuentras algún error o tienes alguna sugerencia de mejora, no dudes en abrir un issue.
 
 Shield: [![CC BY 4.0][cc-by-shield]][cc-by]
 
